@@ -28,6 +28,7 @@ BeforeAll {
         if (Test-Path $modulePath) {
             Import-Module $modulePath -Force -ErrorAction Stop
         }
+        $script:digAvailable = [bool](Get-Command dig -ErrorAction SilentlyContinue)
     }
 }
 
@@ -52,7 +53,7 @@ Describe 'Resolve-DnsNames' {
         Join-Path $script:ExamplesDir 'Resolve-DnsNames.ps1' | Should -Exist
     }
 
-    It 'Resolve-DnsName returns records for a known hostname' -Skip:(-not $IsLinux) {
+    It 'Resolve-DnsName returns records for a known hostname' -Skip:(-not $IsLinux -or -not $script:digAvailable) {
         $result = Resolve-DnsName -Name 'dns.google' -ErrorAction SilentlyContinue
         $result | Should -Not -BeNullOrEmpty
     }
@@ -75,7 +76,7 @@ Describe 'Get-DomainInfo' {
         Join-Path $script:ExamplesDir 'Get-DomainInfo.ps1' | Should -Exist
     }
 
-    It 'Resolve-DnsName -Type MX returns MX records' -Skip:(-not $IsLinux) {
+    It 'Resolve-DnsName -Type MX returns MX records' -Skip:(-not $IsLinux -or -not $script:digAvailable) {
         $result = Resolve-DnsName -Name 'google.com' -Type MX -ErrorAction SilentlyContinue
         if ($result) {
             $result | ForEach-Object { $_.Type | Should -Be 'MX' }
@@ -89,7 +90,7 @@ Describe 'Get-ReverseDns' {
         Join-Path $script:ExamplesDir 'Get-ReverseDns.ps1' | Should -Exist
     }
 
-    It 'Resolve-DnsName -Type PTR resolves a well-known IP' -Skip:(-not $IsLinux) {
+    It 'Resolve-DnsName -Type PTR resolves a well-known IP' -Skip:(-not $IsLinux -or -not $script:digAvailable) {
         $result = Resolve-DnsName -Name '8.8.8.8' -Type PTR -ErrorAction SilentlyContinue
         if ($result) {
             $result.PSObject.Properties.Name | Should -Contain 'NameHost'

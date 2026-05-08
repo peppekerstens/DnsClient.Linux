@@ -89,14 +89,9 @@ function Resolve-DnsName {
         $digArgs = @($Name, $Type, '+noall', '+answer', '+authority', '+additional', '+ttlid')
         if ($Server) { $digArgs = @("@$Server") + $digArgs }
 
-        $lines = & dig @digArgs 2>/dev/null
-
         # Parse dig output lines of the form:
         # <name>  <ttl>  IN  <type>  <rdata...>
-        # Section is inferred from position — dig outputs ANSWER then AUTHORITY then ADDITIONAL
         # We need the section headers to determine section
-        $currentSection = 'Answer'
-        $rawLines = & dig @($digArgs[0..($digArgs.Count-1)]) 2>/dev/null
 
         # Run dig with section comments to detect section boundaries
         $digArgsFull = @($Name, $Type, '+noall', '+answer', '+authority', '+additional', '+ttlid', '+comments')

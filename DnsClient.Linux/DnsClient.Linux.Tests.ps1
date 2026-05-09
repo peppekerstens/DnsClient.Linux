@@ -13,6 +13,7 @@
 
 BeforeDiscovery {
     $script:OnLinux = $IsLinux
+    $script:ResolvectlAvailable = [bool](Get-Command resolvectl -ErrorAction SilentlyContinue)
 
     $script:ExpectedFunctions = @(
         # Implemented
@@ -95,15 +96,11 @@ Describe 'DnsClient.Linux module surface' -Skip:(-not $script:OnLinux) {
 # ---------------------------------------------------------------------------
 Describe 'Resolve-DnsName' -Skip:(-not $script:OnLinux) {
 
-    BeforeAll {
-        $script:DigAvailable = [bool](Get-Command dig -ErrorAction SilentlyContinue)
-    }
-
-    It 'returns results for a known hostname without error' -Skip:(-not $script:DigAvailable) {
+    It 'returns results for a known hostname without error' -Skip:(-not $script:ResolvectlAvailable) {
         { Resolve-DnsName -Name 'dns.google' } | Should -Not -Throw
     }
 
-    It 'returns objects with required properties' -Skip:(-not $script:DigAvailable) {
+    It 'returns objects with required properties' -Skip:(-not $script:ResolvectlAvailable) {
         $result = Resolve-DnsName -Name 'dns.google' | Select-Object -First 1
         $result | Should -Not -BeNullOrEmpty
         $result.PSObject.Properties.Name | Should -Contain 'Name'
@@ -112,12 +109,24 @@ Describe 'Resolve-DnsName' -Skip:(-not $script:OnLinux) {
         $result.PSObject.Properties.Name | Should -Contain 'IPAddress'
     }
 
-    It 'respects -Type A filter' -Skip:(-not $script:DigAvailable) {
+    It 'respects -Type A filter' -Skip:(-not $script:ResolvectlAvailable) {
         $result = Resolve-DnsName -Name 'dns.google' -Type A
         $result | ForEach-Object { $_.Type | Should -Be 'A' }
     }
 
-    It 'throws when dig is unavailable' -Skip:($script:DigAvailable) {
+    It 'resolves MX records' -Skip:(-not $script:ResolvectlAvailable) {
+        $result = Resolve-DnsName -Name 'gmail.com' -Type MX
+        $result | Should -Not -BeNullOrEmpty
+        $result[0].PSObject.Properties.Name | Should -Contain 'NameExchange'
+        $result[0].PSObject.Properties.Name | Should -Contain 'Preference'
+    }
+
+    It 'emits warning for -Server parameter' -Skip:(-not $script:ResolvectlAvailable) {
+        Resolve-DnsName -Name 'dns.google' -Server '8.8.8.8' -WarningVariable w -WarningAction SilentlyContinue
+        $w | Should -Not -BeNullOrEmpty
+    }
+
+    It 'throws when resolvectl is unavailable' -Skip:($script:ResolvectlAvailable) {
         { Resolve-DnsName -Name 'example.com' } | Should -Throw
     }
 }

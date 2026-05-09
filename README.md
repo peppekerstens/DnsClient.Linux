@@ -1,6 +1,6 @@
 # DnsClient.Linux
 
-PowerShell 7.x module providing cmdlet parity with the Windows `DnsClient` module on Linux. Wraps `dig` and `resolvectl` to deliver familiar DNS resolution and configuration cmdlets.
+PowerShell 7.x module providing cmdlet parity with the Windows `DnsClient` module on Linux. Wraps `resolvectl` (systemd-resolved) to deliver familiar DNS resolution and configuration cmdlets.
 
 Part of the **Linux PowerShell Cmdlet Parity** project — inspired by Evgenij Smirnov's [2025 European PowerShell Summit session](https://www.youtube.com/watch?v=RlzinWYIjBY) and documented in the blog series at [peppekerstens.github.io](https://peppekerstens.github.io/linux-command-wrapping-part-1/).
 
@@ -8,7 +8,7 @@ Part of the **Linux PowerShell Cmdlet Parity** project — inspired by Evgenij S
 
 ## What it does
 
-On **Linux**, wraps `dig`, `resolvectl`, and `/etc/resolv.conf` to provide PowerShell cmdlets matching the Windows `DnsClient` module API as closely as possible. All 21 cmdlets that the Windows module exports are present — 4 are fully implemented, the remaining 17 are stubs that emit a warning on Linux.
+On **Linux**, wraps `resolvectl` (systemd-resolved) and `/etc/resolv.conf` to provide PowerShell cmdlets matching the Windows `DnsClient` module API as closely as possible. All 21 cmdlets that the Windows module exports are present — 4 are fully implemented, the remaining 17 are stubs that emit a warning on Linux.
 
 On **Windows**, use the built-in `DnsClient` module directly — this module refuses to load there.
 
@@ -18,8 +18,7 @@ On **Windows**, use the built-in `DnsClient` module directly — this module ref
 
 - PowerShell 7.2+
 - **Linux only** — the module refuses to load on Windows (throws a descriptive error)
-- `dig` (package: `dnsutils` / `bind9-dnsutils`) for `Resolve-DnsName`
-- `resolvectl` (systemd-resolved) or `nscd` for `Clear-DnsClientCache`
+- `resolvectl` (systemd-resolved) — required for `Resolve-DnsName`, `Clear-DnsClientCache`, and `Get-DnsClientServerAddress`. Available by default on Ubuntu 20.04+, Debian 11+, Fedora 36+, openSUSE Leap 15.4+. Falls back to `nscd --invalidate=hosts` for cache flush on older systems.
 - `/etc/resolv.conf` for `Get-DnsClientServerAddress` and `Get-DnsClientGlobalSetting`
 
 ---
@@ -72,7 +71,7 @@ Legend: ✅ Implemented &nbsp;|&nbsp; ⚠️ Stub
 
 | Cmdlet | Status | Linux tool | Notes |
 |---|:---:|---|---|
-| `Resolve-DnsName` | ✅ | `dig` | A, AAAA, CNAME, MX, NS, PTR, SOA, SRV, TXT, ANY; `-Name`, `-Type`, `-Server` parameters; throws with install hint if `dig` missing |
+| `Resolve-DnsName` | ✅ | `resolvectl query --json=short` | A, AAAA, CNAME, MX, NS, PTR, SOA, SRV, TXT; `-Name`, `-Type` parameters; `-Server` emits a warning (resolvectl uses the system resolver); throws with descriptive error if `resolvectl` missing; PTR accepts plain IP — arpa conversion handled automatically |
 | `Clear-DnsClientCache` | ✅ | `resolvectl flush-caches` | Falls back to `nscd --invalidate=hosts`; supports `-WhatIf` / `-Confirm` |
 | `Get-DnsClientServerAddress` | ✅ | `/etc/resolv.conf` + `resolvectl status` | Per-interface DNS server list; `-InterfaceAlias`, `-AddressFamily` filters |
 | `Get-DnsClientGlobalSetting` | ✅ | `/etc/resolv.conf` + `resolvectl status` | Returns `SuffixSearchList` from search/domain lines |
@@ -98,7 +97,7 @@ Legend: ✅ Implemented &nbsp;|&nbsp; ⚠️ Stub
 
 ## Implementation notes
 
-- `Resolve-DnsName` runs `dig +noall +answer +authority +additional +ttlid +comments` and parses section output into typed objects. If `dig` is not installed it throws a terminating `ErrorRecord` with `ErrorCategory.NotInstalled` and the install command in the message.
+- `Resolve-DnsName` runs `resolvectl query --type=<TYPE> --json=short <name>`. Each result is a separate JSON object on its own line. Record types A, AAAA, CNAME, MX, NS, PTR, SOA, SRV, and TXT are mapped to the Windows property shapes. IPv4 addresses come back as `[octet, octet, octet, octet]` and are joined with `.`; IPv6 as a 16-byte array and converted via `[System.Net.IPAddress]`. PTR queries accept a bare IPv4 or IPv6 address — the function converts to the appropriate `.in-addr.arpa` or `.ip6.arpa` form before querying. If `resolvectl` is not installed, a terminating `ErrorRecord` is thrown with `ErrorCategory.NotInstalled`. The `-Server` parameter is not supported (resolvectl always uses the system resolver) — a warning is emitted and the query proceeds.
 - `Clear-DnsClientCache` tries `resolvectl flush-caches` first, then falls back to `nscd --invalidate=hosts`. Fully `ShouldProcess`-aware (`-WhatIf` / `-Confirm`).
 - `Get-DnsClientServerAddress` reads `nameserver` lines from `/etc/resolv.conf` as the global entry and queries `resolvectl status` for per-interface DNS assignments.
 - `Get-DnsClientGlobalSetting` reads `search`/`domain` lines from `/etc/resolv.conf` and merges with `resolvectl status` global DNS Domain output. `UseDevolution` and `DevolutionLevel` are returned as `$false` / `0` — they are Windows-specific concepts with no Linux equivalent.
@@ -117,19 +116,25 @@ The Windows DNS client functionality lives in the `DnsClient` module, which is s
 
 ### Tool choices
 
-**`dig`** was the natural choice for `Resolve-DnsName`. The `host` and `nslookup` tools are simpler but have less structured output and fewer record type options. `dig +noall +answer +authority +additional +ttlid +comments` gives predictable section-delimited output that maps cleanly to the Windows cmdlet's `Section` property. The parser reads section header comments (`;;  ANSWER SECTION:`, etc.) to track which section each record belongs to.
+**`resolvectl query --json=short`** is the backend for `Resolve-DnsName`. It ships with systemd-resolved, which is the default DNS resolver on modern Ubuntu, Debian, Fedora, openSUSE, and most cloud images. Crucially, it supports `--json=short` and `--type=<TYPE>` — each record comes back as a separate JSON object on its own line, with a typed `key.type` field and record-specific fields (`address`, `exchange`, `priority`, `name`, `items`, etc.). No text parsing required.
 
-**`resolvectl`** (from systemd-resolved) handles cache flushing and per-interface DNS server queries. On most modern Ubuntu/Debian/RHEL systems this is the DNS resolver. The fallback to `nscd --invalidate=hosts` covers older systems.
+The earlier implementation used `dig`, which was the natural first choice given its structured section-delimited output. Two problems emerged: `dig` has no JSON mode (so it was the one text-parser among otherwise JSON-parsed backends), and `dig` is not installed by default on many modern distros — including the Ubuntu WSL2 environment used for testing. `resolvectl` is always present when systemd-resolved is running, which it is on every target distro.
+
+The one trade-off: `resolvectl query` always uses the system resolver. The `-Server` parameter — which `dig` supported via `@server` — is not honoured. A warning is emitted if `-Server` is passed. To use a different resolver, configure it via `resolvectl dns`.
+
+**`resolvectl`** (from systemd-resolved) also handles cache flushing and per-interface DNS server queries. The fallback to `nscd --invalidate=hosts` covers systems where systemd-resolved manages the cache through a different mechanism.
 
 **`/etc/resolv.conf`** is the universal baseline for DNS server and search domain configuration — it exists on every Linux system regardless of which resolver is running.
 
 ### Key gotchas
 
-**`dig` output has a `Listing...`-style header only when querying multiple types.** For a single record type query, the output is clean. For `ANY`, dig emits a preamble. The parser skips all lines starting with `;` (comments) and blank lines, which handles both cases.
+**PTR lookup arpa conversion is automatic.** Pass the plain IP address (`'8.8.8.8'`) — the function converts it to `8.8.8.8.in-addr.arpa` for IPv4 or the appropriate nibble-reversed `.ip6.arpa` form for IPv6, matching the Windows behaviour.
 
-**PTR records need the IP reversed.** `dig 8.8.8.8 PTR` does not work — you need `dig -x 8.8.8.8` or `dig 8.8.8.8.in-addr.arpa PTR`. `Resolve-DnsName -Type PTR` on Windows accepts the plain IP and handles the reversal internally. Our implementation passes the name directly to `dig`, so callers should pass the already-reversed ARPA name for PTR queries, or pass the plain IP and use `-Type PTR` which `dig` handles correctly via the `@server name type` argument order.
+**`resolvectl` does not support ad-hoc server selection.** The `-Server` parameter emits a warning and is ignored. To query a specific server, use the system-level `resolvectl dns <interface> <server>` to configure it, then call `Resolve-DnsName`.
 
-**MX records have a preference value.** `dig` returns MX as `10 mail.example.com.` — priority first, then the hostname. The parser splits on whitespace and maps to `Preference` and `NameExchange` properties, matching the Windows output shape.
+**MX records have a preference value.** `resolvectl` returns MX records with `priority` and `exchange` fields in the JSON. These map to `Preference` and `NameExchange` properties, matching the Windows output shape.
+
+**`ANY` queries are not supported.** `resolvectl query --type=ANY` is not a standard query type in all resolver implementations and returns inconsistent results. The `ValidateSet` has been updated to exclude it; use multiple explicit type queries instead.
 
 ---
 
@@ -137,6 +142,7 @@ The Windows DNS client functionality lives in the `DnsClient` module, which is s
 
 | Version | Notes |
 |---|---|
+| 0.2.0 | `Resolve-DnsName` rewritten to use `resolvectl query --json=short` instead of `dig`. PTR arpa conversion automatic. `-Server` emits warning instead of being passed to backend. `ANY` type removed (not reliably supported by resolvectl). Tests updated to use `resolvectl` availability guard. |
 | 0.1.0 | Initial release, extracted from NetTCPIP.Linux v0.3.0. `Resolve-DnsName`, `Clear-DnsClientCache`, `Get-DnsClientServerAddress`, `Get-DnsClientGlobalSetting` implemented. 17 stubs. |
 
 ---

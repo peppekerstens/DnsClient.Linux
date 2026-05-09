@@ -1,5 +1,7 @@
 # DnsClient.Linux
 
+[![Pester Tests](https://github.com/peppekerstens/DnsClient.Linux/actions/workflows/pester.yml/badge.svg)](https://github.com/peppekerstens/DnsClient.Linux/actions/workflows/pester.yml)
+
 PowerShell 7.x module providing cmdlet parity with the Windows `DnsClient` module on Linux. Wraps `resolvectl` (systemd-resolved) to deliver familiar DNS resolution and configuration cmdlets.
 
 Part of the **Linux PowerShell Cmdlet Parity** project — inspired by Evgenij Smirnov's [2025 European PowerShell Summit session](https://www.youtube.com/watch?v=RlzinWYIjBY) and documented in the blog series at [peppekerstens.github.io](https://peppekerstens.github.io/linux-command-wrapping-part-1/).
@@ -136,6 +138,28 @@ The one trade-off: `resolvectl query` always uses the system resolver. The `-Ser
 
 **`ANY` queries are not supported.** `resolvectl query --type=ANY` is not a standard query type in all resolver implementations and returns inconsistent results. The `ValidateSet` has been updated to exclude it; use multiple explicit type queries instead.
 
+---
+
+## CI / Testing
+
+Tested across 5 Linux distributions in containers:
+
+| Distro | Image |
+|---|---|
+| Ubuntu 24.04 | `ghcr.io/peppekerstens/testinfra:ubuntu-24.04` |
+| Debian 12 | `ghcr.io/peppekerstens/testinfra:debian-12` |
+| Fedora 40 | `ghcr.io/peppekerstens/testinfra:fedora-40` |
+| openSUSE Tumbleweed | `ghcr.io/peppekerstens/testinfra:opensuse-tumbleweed` |
+| Arch Linux | `ghcr.io/peppekerstens/testinfra:arch-latest` |
+
+Run locally with:
+
+```powershell
+# From the repo root
+docker compose -f docker-compose.test.yml up --abort-on-container-exit
+```
+
+GitHub Actions runs the same matrix on every push — see `.github/workflows/pester.yml`.
 ---
 
 ## Version history

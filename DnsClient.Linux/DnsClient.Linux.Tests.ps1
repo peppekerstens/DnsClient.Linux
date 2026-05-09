@@ -55,7 +55,6 @@ BeforeDiscovery {
         'Get-DnsClientDohServerAddress',
         'Remove-DnsClientDohServerAddress',
         'Set-DnsClientDohServerAddress',
-        'Get-DnsClient',
         'Get-DnsClientCache',
         'Register-DnsClient',
         'Set-DnsClient',
@@ -193,5 +192,33 @@ Describe 'Stub functions' -Skip:(-not $script:OnLinux) {
     It "'<Name>' emits a not-implemented warning" -ForEach ($script:StubFunctions | ForEach-Object { @{ Name = $_ } }) {
         & $Name -WarningVariable w -WarningAction SilentlyContinue
         $w | Should -Not -BeNullOrEmpty
+    }
+}
+
+# ---------------------------------------------------------------------------
+Describe 'Get-DnsClient' -Skip:(-not $script:OnLinux) {
+
+    It 'returns results without error' {
+        { Get-DnsClient } | Should -Not -Throw
+    }
+
+    It 'returns objects with required properties' {
+        $result = Get-DnsClient | Select-Object -First 1
+        $result | Should -Not -BeNullOrEmpty
+        $result.PSObject.Properties.Name | Should -Contain 'InterfaceAlias'
+        $result.PSObject.Properties.Name | Should -Contain 'InterfaceIndex'
+        $result.PSObject.Properties.Name | Should -Contain 'ConnectionSpecificSuffix'
+    }
+
+    It 'returns at least one entry' {
+        @(Get-DnsClient) | Should -Not -BeNullOrEmpty
+    }
+
+    It 'filters by InterfaceAlias' {
+        $alias = (Get-DnsClient | Where-Object { $_.InterfaceAlias -ne 'global' } | Select-Object -First 1).InterfaceAlias
+        if ($alias) {
+            $results = Get-DnsClient -InterfaceAlias $alias
+            $results | ForEach-Object { $_.InterfaceAlias | Should -Be $alias }
+        }
     }
 }
